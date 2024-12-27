@@ -6,3 +6,5 @@ wordcloud
 pandas
 emoji
 connections
+textblob
+re
