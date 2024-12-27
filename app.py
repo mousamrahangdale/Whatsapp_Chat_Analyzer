@@ -1,142 +1,170 @@
 import streamlit as st
-import preprocessor,helper
+import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
 import seaborn as sns
+from textblob import TextBlob
+import functions
 
-st.sidebar.title("Whatsapp Chat Analyzer")
+st.title('WhatsApp Chat Analyzer')
+file = st.file_uploader("Choose a file")
 
-uploaded_file = st.sidebar.file_uploader("Choose a file")
-if uploaded_file is not None:
-    bytes_data = uploaded_file.getvalue()
-    data = bytes_data.decode("utf-8")
-    df = preprocessor.preprocess(data)
+if file:
+    df = functions.generateDataFrame(file)
+    try:
+        dayfirst = st.radio("Select Date Format in text file:", ('dd-mm-yy', 'mm-dd-yy'))
+        if dayfirst == 'dd-mm-yy':
+            dayfirst = True
+        else:
+            dayfirst = False
+        users = functions.getUsers(df)
+        users_s = st.sidebar.selectbox("Select User to View Analysis", users)
+        selected_user = ""
 
-    # fetch unique users
-    user_list = df['user'].unique().tolist()
-    user_list.remove('group_notification')
-    user_list.sort()
-    user_list.insert(0,"Overall")
+        if st.sidebar.button("Show Analysis"):
+            selected_user = users_s
 
-    selected_user = st.sidebar.selectbox("Show analysis wrt",user_list)
+            st.title("Showing Results for : " + selected_user)
+            df = functions.PreProcess(df, dayfirst)
+            if selected_user != "Everyone":
+                df = df[df['User'] == selected_user]
+            df, media_cnt, deleted_msgs_cnt, links_cnt, word_count, msg_count = functions.getStats(df)
+            st.title("Chat Statistics")
+            stats_c = ["Messages", "Total Words", "Media Shared", "Links Shared", "Messages Deleted"]
+            c1, c2, c3, c4, c5 = st.columns(5)
+            with c1:
+                st.subheader(stats_c[0])
+                st.title(msg_count)
+            with c2:
+                st.subheader(stats_c[1])
+                st.title(word_count)
+            with c3:
+                st.subheader(stats_c[2])
+                st.title(media_cnt)
+            with c4:
+                st.subheader(stats_c[3])
+                st.title(links_cnt)
+            with c5:
+                st.subheader(stats_c[4])
+                st.title(deleted_msgs_cnt)
 
-    if st.sidebar.button("Show Analysis"):
+            # User Activity Count
+            if selected_user == 'Everyone':
+                x = df['User'].value_counts().head()
+                name = x.index
+                count = x.values
+                st.title("Messaging Frequency")
+                st.subheader('Messaging Percentage Count of Users')
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.dataframe(round((df['User'].value_counts() / df.shape[0]) * 100, 2).reset_index().rename(
+                        columns={'User': 'name', 'count': 'percent'}))
+                with col2:
+                    fig, ax = plt.subplots()
+                    ax.bar(name, count,color='red')
+                    ax.set_xlabel("Users")
+                    ax.set_ylabel("Message Sent")
+                    plt.xticks(rotation='vertical')
+                    st.pyplot(fig)
 
-        # Stats Area
-        num_messages, words, num_media_messages, num_links = helper.fetch_stats(selected_user,df)
-        st.title("Top Statistics")
-        col1, col2, col3, col4 = st.columns(4)
 
-        with col1:
-            st.header("Total Messages")
-            st.title(num_messages)
-        with col2:
-            st.header("Total Words")
-            st.title(words)
-        with col3:
-            st.header("Media Shared")
-            st.title(num_media_messages)
-        with col4:
-            st.header("Links Shared")
-            st.title(num_links)
+            # Sentiment Analysis
+            st.title("Sentiment Analysis")
+            def analyze_sentiment(message):
+                sentiment = TextBlob(message).sentiment
+                return sentiment.polarity, sentiment.subjectivity
 
-        # monthly timeline
-        st.title("Monthly Timeline")
-        timeline = helper.monthly_timeline(selected_user,df)
-        fig,ax = plt.subplots()
-        ax.plot(timeline['time'], timeline['message'],color='green')
-        plt.xticks(rotation='vertical')
-        st.pyplot(fig)
+            df[['sentiment_polarity', 'sentiment_subjectivity']] = df['Message'].apply(
+                lambda x: pd.Series(analyze_sentiment(x)))
+            positive = len(df[df['sentiment_polarity'] > 0])
+            negative = len(df[df['sentiment_polarity'] < 0])
+            neutral = len(df[df['sentiment_polarity'] == 0])
 
-        # daily timeline
-        st.title("Daily Timeline")
-        daily_timeline = helper.daily_timeline(selected_user, df)
-        fig, ax = plt.subplots()
-        ax.plot(daily_timeline['only_date'], daily_timeline['message'], color='black')
-        plt.xticks(rotation='vertical')
-        st.pyplot(fig)
-
-        # activity map
-        st.title('Activity Map')
-        col1,col2 = st.columns(2)
-
-        with col1:
-            st.header("Most busy day")
-            busy_day = helper.week_activity_map(selected_user,df)
-            fig,ax = plt.subplots()
-            ax.bar(busy_day.index,busy_day.values,color='purple')
-            plt.xticks(rotation='vertical')
-            st.pyplot(fig)
-
-        with col2:
-            st.header("Most busy month")
-            busy_month = helper.month_activity_map(selected_user, df)
-            fig, ax = plt.subplots()
-            ax.bar(busy_month.index, busy_month.values,color='orange')
-            plt.xticks(rotation='vertical')
-            st.pyplot(fig)
-
-        st.title("Weekly Activity Map")
-        user_heatmap = helper.activity_heatmap(selected_user,df)
-        fig,ax = plt.subplots()
-        ax = sns.heatmap(user_heatmap)
-        st.pyplot(fig)
-
-        # finding the busiest users in the group(Group level)
-        if selected_user == 'Overall':
-            st.title('Most Busy Users')
-            x,new_df = helper.most_busy_users(df)
-            fig, ax = plt.subplots()
-
-            col1, col2 = st.columns(2)
-
+            col1, col2, col3 = st.columns(3)
             with col1:
-                ax.bar(x.index, x.values,color='red')
-                plt.xticks(rotation='vertical')
-                st.pyplot(fig)
+                st.header("Positive")
+                st.title(positive)
             with col2:
-                st.dataframe(new_df)
+                st.header("Negative")
+                st.title(negative)
+            with col3:
+                st.header("Neutral")
+                st.title(neutral)
 
-        # WordCloud
-        st.title("Wordcloud")
-        df_wc = helper.create_wordcloud(selected_user,df)
-        fig,ax = plt.subplots()
-        ax.imshow(df_wc)
-        st.pyplot(fig)
+            # Sentiment Distribution Plot (Scatter)
+            st.title("Sentiment Analysis Overview")
+            fig, ax = plt.subplots(figsize=(10, 6))
+            scatter = ax.scatter(df['sentiment_polarity'], df['sentiment_subjectivity'], 
+                                  c=df['sentiment_polarity'], cmap='Accent', alpha=0.9)
+            ax.set_title("Sentiment Polarity vs Subjectivity", fontsize=16)
+            ax.set_xlabel("Polarity", fontsize=12)
+            ax.set_ylabel("Subjectivity", fontsize=12)
+            ax.grid(True, linestyle='--', alpha=0.6)
+            plt.colorbar(scatter, label='Polarity')
+            st.pyplot(fig)
 
-        # most common words
-        most_common_df = helper.most_common_words(selected_user,df)
+            # Sentiment Word List with Subjectivity
+            st.title("Sentiment Word List")
+            df['sentiment_word'] = df['sentiment_polarity'].apply(
+                lambda x: 'Positive' if x > 0 else ('Negative' if x < 0 else 'Neutral'))
+            st.dataframe(df[['User', 'Message', 'sentiment_word', 'sentiment_polarity', 'sentiment_subjectivity']])  
 
-        fig,ax = plt.subplots()
+            # Emoji Analysis
+            emojiDF = functions.getEmoji(df)
+            st.title("Emoji Analysis")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.dataframe(emojiDF)
+            with col2:
+                fig, ax = plt.subplots()
+                ax.pie(emojiDF[1].head(), labels=emojiDF[0].head(), autopct="%0.2f")
+                plt.legend()
+                st.pyplot(fig)  
 
-        ax.barh(most_common_df[0],most_common_df[1])
-        plt.xticks(rotation='vertical')
+            # Monthly Timeline
+            timeline = functions.getMonthlyTimeline(df)
+            fig, ax = plt.subplots()
+            ax.plot(timeline['time'], timeline['Message'])
+            ax.set_xlabel("Month")
+            ax.set_ylabel("Messages Sent")
+            plt.xticks(rotation='vertical')
+            st.title('Monthly Timeline')
+            st.pyplot(fig)
 
-        st.title('Most commmon words')
-        st.pyplot(fig)
+            # Daily Timeline
+            functions.dailytimeline(df)
 
-        # emoji analysis
-        emoji_df = helper.emoji_helper(selected_user,df)
-        st.title("Emoji Analysis")
+            st.title('Most Busy Days')
+            functions.WeekAct(df)
+            st.title('Most Busy Months')
+            functions.MonthAct(df)
 
-        col1,col2 = st.columns(2)
+            # Weekly Activity Map
+            st.title("Weekly Activity Map")
+            user_heatmap = functions.activity_heatmap(df)
+            fig, ax = plt.subplots()
+            ax = sns.heatmap(user_heatmap)
+            st.pyplot(fig)
 
-        with col1:
-            st.dataframe(emoji_df)
-        with col2:
-           fig, ax = plt.subplots()
-           ax.pie(emoji_df['Count'].head(), labels=emoji_df['Emoji'].head(), autopct="%0.2f")
-           st.pyplot(fig)
+            # WordCloud
+            st.title("Wordcloud")
+            df_wc = functions.create_wordcloud(df)
+            fig, ax = plt.subplots()
+            ax.imshow(df_wc)
+            st.pyplot(fig)
 
-    
+            # Common Words
+            commonWord = functions.MostCommonWords(df)
+            fig, ax = plt.subplots()
+            colors = sns.color_palette("coolwarm", len(commonWord))
+            ax.barh(commonWord[0], commonWord[1], color=colors)
+            ax.set_xlabel("Words")
+            ax.set_ylabel("Frequency")
+            plt.xticks(rotation='vertical')
+            st.title('Most Frequent Words Used In Chat')
+            st.pyplot(fig)
 
-
-
-
-
-
-
-
-
-
-
-
+    except Exception as e:
+        st.subheader("Unable to Process Your Request")
+        st.error(str(e))
